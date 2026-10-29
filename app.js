@@ -18,7 +18,7 @@
 
   // チェック項目。参考にした様式（訪問薬剤管理指導依頼書・情報提供書、指示書）の項目をまとめたもの
   const GROUPS = {
-    kubun: { other: false, always: true, items: ['在宅患者訪問薬剤管理指導または居宅療養管理指導', '在宅移行初期管理料'] },
+    kubun: { other: false, selectedOnly: true, items: ['在宅患者訪問薬剤管理指導または居宅療養管理指導', '在宅移行初期管理料'] },
     drugs_ref: { other: false, items: ['処方せん及びお薬手帳を参照'] },
     reason: {
       label: '通院が困難な理由・服薬管理に係る支援が必要な状態',
@@ -59,26 +59,24 @@
       label: '指示事項',
       other: true,
       items: [
-        '①コンプライアンス',
-        '②服薬指導（管理・保管も含む）',
-        '③服薬時間',
-        '④薬剤の相互作用',
-        '⑤薬剤に影響のある食品等',
-        '⑥処方薬以外の服用',
-        '⑦不要薬剤の処理',
-        '⑧副作用情報',
-        '⑨在宅介護用品の供給・相談応需',
+        'コンプライアンス',
+        '服薬指導（管理・保管も含む）',
+        '服薬時間',
+        '薬剤の相互作用',
+        '薬剤に影響のある食品等',
+        '処方薬以外の服用',
+        '不要薬剤の処理',
+        '副作用情報',
+        '在宅介護用品の供給・相談応需',
       ],
     },
-    condition: {
-      label: '服薬にあたっての情報',
+    special: {
+      label: '特記事項',
       other: true,
-      items: ['運動機能障害', '寝たきり', '嚥下障害', '失語症', '視覚障害', '聴覚障害', '認知症', '抑うつ傾向'],
-    },
-    medical: {
-      label: '特別な医療',
-      other: true,
-      items: ['経管栄養', '疼痛の管理', '褥瘡の処置', 'ストーマの処置', 'カテーテル（コンドームカテーテル、留置カテーテル等）', '点滴の管理', '中心静脈栄養'],
+      items: [
+        '運動機能障害', '寝たきり', '嚥下障害', '失語症', '視覚障害', '聴覚障害', '認知症', '抑うつ傾向',
+        '経管栄養', '疼痛の管理', '褥瘡の処置', 'ストーマの処置', 'カテーテル（コンドームカテーテル、留置カテーテル等）', '点滴の管理', '中心静脈栄養',
+      ],
     },
   };
 
@@ -188,6 +186,15 @@
     const d = Object.assign({}, doc);
     if (d.kubun && !Array.isArray(d.chk_kubun)) d.chk_kubun = [GROUPS.kubun.items[0]];
     delete d.kubun;
+    // 指示事項の番号（①〜⑨）を外す
+    if (Array.isArray(d.chk_instruction)) d.chk_instruction = d.chk_instruction.map((v) => v.replace(/^[①-⑨]/, ''));
+    // 「服薬にあたっての情報」「特別な医療」を「特記事項」に統合
+    if (d.chk_condition || d.chk_medical) {
+      const chk = [...(d.chk_condition || []), ...(d.chk_medical || [])];
+      d.chk_special = [...new Set(chk)];
+      d.other_special = [d.other_condition, d.other_medical].map((v) => String(v || '').trim()).filter(Boolean).join('、');
+      ['chk_condition', 'chk_medical', 'other_condition', 'other_medical'].forEach((k) => delete d[k]);
+    }
     delete d.department;
     delete d.dischargeDate;
     return d;
@@ -313,7 +320,8 @@
     const def = GROUPS[g];
     const sel = doc[`chk_${g}`] || [];
     const other = String(doc[`other_${g}`] || '').trim();
-    const all = settings.showUnchecked || def.always;
+    // 区分は選んだものだけを印字（未選択なら両方を□で印字）
+    const all = def.selectedOnly ? sel.length === 0 : settings.showUnchecked;
     const out = def.items
       .filter((it) => all || sel.includes(it))
       .map((it) => `<span class="ck${sel.includes(it) ? ' on' : ''}">${sel.includes(it) ? '■' : '□'}${U.esc(it)}</span>`);
@@ -371,8 +379,7 @@
         <tr><th>訪問の目的</th><td colspan="3">${checksHtml(doc, 'purpose')}</td></tr>
         <tr><th>指示事項</th><td colspan="3">${checksHtml(doc, 'instruction', { cols2: true })}</td></tr>
         <tr><th>特記事項</th><td colspan="3">
-          <div class="sub">${GROUPS.condition.label}</div>${checksHtml(doc, 'condition')}
-          <div class="sub">${GROUPS.medical.label}</div>${checksHtml(doc, 'medical')}</td></tr>
+${checksHtml(doc, 'special')}</td></tr>
         <tr><th>その他</th><td colspan="3">${text(doc.remarks)}</td></tr>
       </table>
       <p class="s-statement">${statement}</p>
