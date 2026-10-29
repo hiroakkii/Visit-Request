@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <!-- 外部への通信を一切行わない：同じフォルダのファイル以外は読み込まず、通信・フォーム送信も禁止 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>在宅移行初期管理 指示書作成</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header no-print">
+    <h1>在宅移行初期管理 指示書作成</h1>
+    <div class="master-status" id="master-status">患者マスタ未取込</div>
+    <div class="header-actions">
+      <label class="btn primary">
+        患者マスタ取込（Excel）
+        <input type="file" id="file-input" accept=".xlsx,.xlsm,.xls,.csv" hidden>
+      </label>
+      <button type="button" class="btn" id="btn-remap" disabled>取込設定を再確認</button>
+      <button type="button" class="btn" id="btn-settings">医療機関・医師・薬局の設定</button>
+      <button type="button" class="btn" id="btn-history">作成履歴</button>
+      <button type="button" class="btn danger-outline" id="btn-clear-all">保存データ消去</button>
+    </div>
+  </header>
+
+  <main class="layout no-print">
+    <form id="order-form" class="form-col" autocomplete="off">
+      <div class="form-toolbar">
+        <button type="button" class="btn" id="btn-new">新規作成（既定値で開始）</button>
+        <button type="button" class="btn" id="btn-save-default" title="区分・宛先・医師・チェック項目など、患者ごとに変わらない項目を既定値として保存します">定型項目を既定値として保存</button>
+        <span class="hint" id="draft-status"></span>
+      </div>
+
+      <!-- 指示の基本情報 -->
+      <section class="panel">
+        <h2>指示の基本情報</h2>
+        <div class="grid">
+          <label>作成日 <input type="date" name="createdDate"><span class="wareki" data-wareki="createdDate"></span></label>
+          <label>宛先（薬局）
+            <span class="combo">
+              <input type="text" name="pharmacy" list="pharmacy-list" placeholder="○○薬局">
+              <span class="suffix">殿</span>
+            </span>
+            <datalist id="pharmacy-list"></datalist>
+          </label>
+        </div>
+        <div class="field">
+          <span class="field-label">指示期間 <small>（6月以内に限る）</small></span>
+          <div class="period">
+            <input type="date" name="periodStart"> 〜 <input type="date" name="periodEnd">
+            <span class="quick">
+              <button type="button" class="btn small" data-months="1">1か月</button>
+              <button type="button" class="btn small" data-months="3">3か月</button>
+              <button type="button" class="btn small" data-months="6">6か月</button>
+            </span>
+          </div>
+          <div class="hint" id="period-text"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">区分</span>
+          <div class="radios">
+            <label><input type="radio" name="kubun" value="在宅患者訪問薬剤管理指導"> 在宅患者訪問薬剤管理指導（医療保険）</label>
+            <label><input type="radio" name="kubun" value="居宅療養管理指導"> 居宅療養管理指導（介護保険）</label>
+          </div>
+        </div>
+      </section>
+
+      <!-- 患者情報 -->
+      <section class="panel">
+        <h2>患者情報</h2>
+        <div class="search-box">
+          <input type="search" id="patient-search" placeholder="患者マスタ（Excel）を取り込むと検索できます" disabled>
+          <ul class="search-results" id="search-results" hidden></ul>
+        </div>
+        <p class="hint">検索結果を選ぶと、氏名・ふりがな・性別・生年月日・年齢・住所（取り込んだ列）を入力します。選んだ後も手入力で修正できます。</p>
+        <div class="grid">
+          <label>ふりがな <input type="text" name="pt_kana"></label>
+          <label>氏名 <span class="combo"><input type="text" name="pt_name"><span class="suffix">様</span></span></label>
+          <div class="field">
+            <span class="field-label">性別</span>
+            <div class="radios">
+              <label><input type="radio" name="pt_sex" value="男"> 男</label>
+              <label><input type="radio" name="pt_sex" value="女"> 女</label>
+            </div>
+          </div>
+          <label>患者ID <input type="text" name="pt_id" placeholder="印刷はしません（履歴の検索用）"></label>
+          <label>生年月日 <input type="date" name="pt_birth" min="1868-01-25"><span class="wareki" data-wareki="pt_birth"></span></label>
+          <label>年齢 <span class="combo"><input type="number" name="pt_age" min="0" max="130" class="w-num"><span class="suffix">歳</span></span>
+            <span class="hint" id="age-hint"></span></label>
+          <label>郵便番号 <input type="text" name="pt_zip" placeholder="123-4567" class="w-zip"></label>
+          <label>電話番号 <input type="text" name="pt_tel"></label>
+          <label class="span2">住所 <input type="text" name="pt_address"></label>
+        </div>
+      </section>
+
+      <!-- 介護・連携 -->
+      <section class="panel">
+        <h2>介護保険・連携</h2>
+        <div class="grid">
+          <label>介護度
+            <select name="care_level">
+              <option value="">（未選択）</option>
+              <option>要支援１</option><option>要支援２</option>
+              <option>要介護１</option><option>要介護２</option><option>要介護３</option><option>要介護４</option><option>要介護５</option>
+              <option>申請中</option><option>非該当</option><option>未申請</option>
+            </select>
+          </label>
+          <label>介護支援専門員（ケアマネジャー） <input type="text" name="cm_name" placeholder="氏名"></label>
+          <label class="span2">所属事業所・連絡先 <input type="text" name="cm_office" placeholder="○○居宅介護支援事業所　TEL ..."></label>
+        </div>
+        <p class="hint">介護保険については薬局にて確認のうえ記載可。</p>
+      </section>
+
+      <!-- 病状・治療 -->
+      <section class="panel">
+        <h2>病状・治療</h2>
+        <label class="block">疾病名 <textarea name="disease" rows="2"></textarea></label>
+        <div class="field">
+          <span class="field-label">疾病告知</span>
+          <div class="radios">
+            <label><input type="radio" name="disclosure" value="無"> 無</label>
+            <label><input type="radio" name="disclosure" value="有"> 有</label>
+          </div>
+        </div>
+        <label class="block">既往歴・経過 <textarea name="history" rows="3"></textarea></label>
+        <label class="block">治療状況 <textarea name="treatment" rows="3"></textarea></label>
+        <div class="field">
+          <span class="field-label">使用薬剤</span>
+          <div class="checks" data-group="drugs_ref"></div>
+          <textarea name="drugs" rows="3" placeholder="主な使用薬剤（必要な場合）"></textarea>
+        </div>
+      </section>
+
+      <!-- 在宅移行初期管理 -->
+      <section class="panel">
+        <h2>在宅移行初期管理</h2>
+        <div class="grid">
+          <label>退院（予定）日 <input type="date" name="dischargeDate"><span class="wareki" data-wareki="dischargeDate"></span></label>
+          <label>在宅療養開始（予定）日 <input type="date" name="homeStartDate"><span class="wareki" data-wareki="homeStartDate"></span></label>
+        </div>
+        <div class="field">
+          <span class="field-label">通院が困難な理由・服薬管理に係る支援が必要な状態</span>
+          <div class="checks" data-group="reason"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">在宅移行初期（計画的な訪問の開始前）の訪問で依頼する事項</span>
+          <div class="checks" data-group="initial"></div>
+        </div>
+      </section>
+
+      <!-- 訪問指示 -->
+      <section class="panel">
+        <h2>訪問の目的・指示事項</h2>
+        <div class="field">
+          <span class="field-label">訪問の目的</span>
+          <div class="checks" data-group="purpose"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">指示事項</span>
+          <div class="checks cols2" data-group="instruction"></div>
+        </div>
+      </section>
+
+      <!-- 特記事項 -->
+      <section class="panel">
+        <h2>特記事項</h2>
+        <div class="field">
+          <span class="field-label">服薬にあたっての情報</span>
+          <div class="checks" data-group="condition"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">特別な医療</span>
+          <div class="checks" data-group="medical"></div>
+        </div>
+        <label class="block">その他・連絡事項 <textarea name="remarks" rows="3"></textarea></label>
+      </section>
+
+      <!-- 医師 -->
+      <section class="panel">
+        <h2>指示医</h2>
+        <div class="grid">
+          <label>医師氏名 <input type="text" name="doctor" list="doctor-list"><datalist id="doctor-list"></datalist></label>
+          <label>診療科 <input type="text" name="department" list="department-list"><datalist id="department-list"></datalist></label>
+        </div>
+        <p class="hint" id="clinic-summary"></p>
+      </section>
+    </form>
+
+    <!-- プレビュー -->
+    <aside class="preview-col">
+      <div class="preview-toolbar">
+        <strong>印刷プレビュー（A4 縦）</strong>
+        <label class="inline"><input type="checkbox" id="opt-show-unchecked" checked> 選ばなかった選択肢も□で印刷</label>
+        <button type="button" class="btn primary" id="btn-print">履歴に保存して印刷</button>
+      </div>
+      <div class="warnings" id="form-warnings"></div>
+      <div class="preview-scroll">
+        <div class="preview-scale" id="preview-scale">
+          <div class="sheet" id="sheet"></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- 印刷用（プレビューと同じ内容） -->
+  <section id="print-area" class="print-only"></section>
+
+  <!-- 設定 -->
+  <dialog id="settings-dialog" class="no-print">
+    <div class="dialog-body">
+      <h2>医療機関・医師・薬局の設定</h2>
+      <p class="hint">このPCのブラウザ内にのみ保存します。</p>
+      <div class="grid">
+        <label class="span2">書類の表題 <input type="text" id="set-title"></label>
+        <label class="span2">医療機関名 <input type="text" id="set-clinic"></label>
+        <label class="span2">所在地 <input type="text" id="set-address"></label>
+        <label>電話番号 <input type="text" id="set-tel"></label>
+        <label>FAX番号 <input type="text" id="set-fax"></label>
+        <label>医師（1行に1名） <textarea id="set-doctors" rows="5" placeholder="山田 太郎&#10;佐藤 花子"></textarea></label>
+        <label>診療科（1行に1つ） <textarea id="set-departments" rows="5" placeholder="内科&#10;外科"></textarea></label>
+        <label class="span2">薬局（1行に1件。宛先の候補になります） <textarea id="set-pharmacies" rows="5" placeholder="○○薬局 本店&#10;△△調剤薬局"></textarea></label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="btn-settings-cancel">キャンセル</button>
+        <button type="button" class="btn primary" id="btn-settings-ok">保存</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- 作成履歴 -->
+  <dialog id="history-dialog" class="no-print">
+    <div class="dialog-body">
+      <h2>作成履歴</h2>
+      <div class="search-bar">
+        <input type="search" id="history-search" placeholder="氏名・ふりがな・ID・宛先で検索">
+      </div>
+      <p class="hint">「開く」で内容を読み込みます。指示期間の更新などで再作成する場合は「複製して作成」を使うと、作成日・指示期間を今日から設定し直します。</p>
+      <div class="table-wrap history-wrap">
+        <table class="data-table" id="history-table">
+          <thead><tr><th>作成日</th><th>患者</th><th>指示期間</th><th>宛先</th><th>操作</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="btn-history-close">閉じる</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- 取込確認画面 -->
+  <dialog id="import-dialog" class="no-print wide">
+    <div class="dialog-body">
+      <h2>取込内容の確認</h2>
+      <p class="hint">Excelの題名（見出し）から各列の取込先を自動判別しました。間違っている場合は「取込先」を変更してください。</p>
+
+      <div class="import-options">
+        <label id="sheet-label">シート <select id="sheet-select"></select></label>
+        <label>見出し（題名）の行 <input type="number" id="header-row" min="1" value="1" class="w-num"> 行目</label>
+        <span class="file-name" id="import-file-name"></span>
+      </div>
+
+      <h3>列ごとの取込先</h3>
+      <div class="table-wrap mapping-wrap">
+        <table class="data-table" id="mapping-table">
+          <thead>
+            <tr><th>Excel列</th><th>題名（見出し）</th><th>データ例</th><th>取込先</th><th>判別</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="mapping-warnings" class="warnings"></div>
+
+      <h3>取込結果プレビュー <span class="hint" id="preview-info"></span></h3>
+      <div class="table-wrap preview-wrap">
+        <table class="data-table" id="preview-table">
+          <thead>
+            <tr><th>Excel行</th><th>ID</th><th>ふりがな</th><th>氏名</th><th>性別</th><th>生年月日</th><th>年齢</th><th>〒</th><th>住所</th><th>電話</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="btn-import-cancel">キャンセル</button>
+        <button type="button" class="btn primary" id="btn-import-ok">この内容で取り込む</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="lib/xlsx.full.min.js"></script>
+  <script src="util.js"></script>
+  <script src="master.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
