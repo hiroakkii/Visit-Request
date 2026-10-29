@@ -18,6 +18,7 @@
 
   // チェック項目。参考にした様式（訪問薬剤管理指導依頼書・情報提供書、指示書）の項目をまとめたもの
   const GROUPS = {
+    kubun: { other: false, always: true, items: ['在宅患者訪問薬剤管理指導または居宅療養管理指導', '在宅移行初期管理料'] },
     drugs_ref: { other: false, items: ['処方せん及びお薬手帳を参照'] },
     reason: {
       label: '通院が困難な理由・服薬管理に係る支援が必要な状態',
@@ -82,14 +83,14 @@
   };
 
   // 「既定値として保存」の対象（患者ごとに変わらない定型項目）
-  const TEMPLATE_FIELDS = ['kubun', 'pharmacy', 'doctor', 'department'].concat(
+  const TEMPLATE_FIELDS = ['pharmacy', 'doctor', 'noPeriod'].concat(
     Object.keys(GROUPS).flatMap((g) => [`chk_${g}`, `other_${g}`]),
   );
 
   const DEFAULT_SETTINGS = {
     title: '訪問薬剤管理指導に係る情報提供書 及び 指示書（在宅移行初期）',
     clinic: '', address: '', tel: '', fax: '',
-    doctors: [], departments: [], pharmacies: [],
+    doctors: [], pharmacies: [],
     showUnchecked: true,
   };
   const BUILTIN_DEFAULTS = { months: MAX_MONTHS, fields: { chk_drugs_ref: [GROUPS.drugs_ref.items[0]] } };
@@ -165,11 +166,31 @@
 
   function newDoc() {
     const today = U.todayIso();
-    return Object.assign({}, defaults.fields, {
-      createdDate: today,
-      periodStart: today,
-      periodEnd: U.periodEnd(today, defaults.months || MAX_MONTHS),
-    });
+    return Object.assign({}, defaults.fields, { createdDate: today }, defaultPeriod(defaults.fields, today));
+  }
+
+  // 指示期間を指定しない設定なら空欄、それ以外は既定の長さで今日から
+  function defaultPeriod(doc, today) {
+    if (isNoPeriod(doc)) return { periodStart: '', periodEnd: '' };
+    return { periodStart: today, periodEnd: U.periodEnd(today, defaults.months || MAX_MONTHS) };
+  }
+
+  function isNoPeriod(doc) {
+    return Array.isArray(doc.noPeriod) && doc.noPeriod.length > 0;
+  }
+
+  function hasPeriod(doc) {
+    return !isNoPeriod(doc) && Boolean(doc.periodStart || doc.periodEnd);
+  }
+
+  // 旧版の保存データ（区分がラジオボタン、性別・診療科など）を現在の形に合わせる
+  function migrate(doc) {
+    const d = Object.assign({}, doc);
+    if (d.kubun && !Array.isArray(d.chk_kubun)) d.chk_kubun = [GROUPS.kubun.items[0]];
+    delete d.kubun;
+    delete d.department;
+    delete d.dischargeDate;
+    return d;
   }
 
   function hasPatientInput(doc) {
@@ -180,7 +201,9 @@
 
   function loadDoc(doc, historyId) {
     form.reset();
-    docToForm(doc);
+    docToForm(migrate(doc));
+    delete form.elements.pt_zip.dataset.auto;
+    $('#zip-hint').textContent = '';
     currentHistoryId = historyId || null;
     onFormChange();
   }
@@ -194,6 +217,7 @@
   }
 
   function setPeriodMonths(n) {
+    form.elements.noPeriod.checked = false;
     const start = form.elements.periodStart.value || form.elements.createdDate.value || U.todayIso();
     form.elements.periodStart.value = start;
     form.elements.periodEnd.value = U.periodEnd(start, n);
@@ -214,9 +238,12 @@
     f.pt_birth.value = p.birth || '';
     f.pt_age.value = window.Master.ageOf(p, f.createdDate.value || U.todayIso());
     f.pt_zip.value = p.zip || '';
+    f.pt_zip.dataset.auto = '';
     f.pt_tel.value = p.tel || '';
     f.pt_address.value = p.address;
+    $('#zip-hint').textContent = '';
     onFormChange();
+    if (!p.zip && p.address) autoZip(true);
     f.disease.focus();
   }
 
@@ -226,15 +253,54 @@
       el.textContent = v ? U.formatWareki(v) : '';
     });
     const { periodStart: s, periodEnd: e } = form.elements;
-    $('#period-text').textContent = s.value && e.value ? `${U.formatWareki(s.value)} から ${U.formatWareki(e.value)} まで` : '';
+    const none = form.elements.noPeriod.checked;
+    [s, e, ...document.querySelectorAll('[data-months]')].forEach((el) => { el.disabled = none; });
+    $('#period-text').textContent = none ? '指示書には指示期間を記載しません。'
+      : s.value && e.value ? `${U.formatWareki(s.value)} から ${U.formatWareki(e.value)} まで`
+        : s.value || e.value ? '' : '空欄の場合、指示書には指示期間を記載しません。';
+  }
+
+  // ---------- 住所 → 郵便番号 ----------
+  function setZip(zip) {
+    form.elements.pt_zip.value = zip;
+    form.elements.pt_zip.dataset.auto = '1';
+    onFormChange();
+  }
+
+  // force: 郵便番号が手入力・マスタ由来でも探す（「住所から入力」ボタン）
+  async function autoZip(force) {
+    const f = form.elements;
+    const hint = $('#zip-hint');
+    const address = f.pt_address.value.trim();
+    if (!address) return;
+    if (!force && f.pt_zip.value.trim() && f.pt_zip.dataset.auto !== '1') return;
+    await window.ZipCode.ready();
+    const r = window.ZipCode.lookup(address);
+    hint.classList.toggle('warn-text', r.status !== 'one');
+    if (r.status === 'nodata') {
+      if (force) hint.textContent = '郵便番号データが未読込です。「医療機関・医師・薬局の設定」で日本郵便の郵便番号データを読み込むと、住所から自動入力できます。';
+      return;
+    }
+    if (r.status === 'none') {
+      hint.textContent = '住所から郵便番号が見つかりませんでした。都道府県・市区町村・町名を確認するか、手入力してください。';
+      return;
+    }
+    const label = (c) => `${c.zip}　${c.pref}${c.city}${c.town}${c.note ? `（${c.note}）` : ''}`;
+    if (r.status === 'one') {
+      setZip(r.candidates[0].zip);
+      hint.textContent = `住所から郵便番号を入力しました：${label(r.candidates[0])}`;
+      return;
+    }
+    hint.innerHTML = `郵便番号の候補が複数あります。選んでください：${r.candidates.map((c) =>
+      `<button type="button" class="btn small" data-zip="${U.esc(c.zip)}">${U.esc(label(c))}</button>`).join('')}${r.total > r.candidates.length ? `<span>ほか ${r.total - r.candidates.length} 件</span>` : ''}`;
   }
 
   function validate(doc) {
     const msgs = [];
     if (!doc.pt_name) msgs.push('患者氏名が未入力です。');
     if (!doc.pharmacy) msgs.push('宛先（薬局）が未入力です。');
-    if (!doc.kubun) msgs.push('区分（在宅患者訪問薬剤管理指導／居宅療養管理指導）を選択してください。');
-    if (!doc.periodStart || !doc.periodEnd) msgs.push('指示期間を入力してください。');
+    if (!(doc.chk_kubun || []).length) msgs.push('区分を選択してください。');
+    if (!hasPeriod(doc)) { /* 指示期間なし */ } else if (!doc.periodStart || !doc.periodEnd) msgs.push('指示期間の開始日と終了日を入力してください（指定しない場合は両方とも空欄か「指定しない」にチェック）。');
     else if (doc.periodEnd < doc.periodStart) msgs.push('指示期間の終了日が開始日より前になっています。');
     else if (doc.periodEnd > U.periodEnd(doc.periodStart, MAX_MONTHS)) msgs.push(`指示期間が6月を超えています（${U.formatWareki(U.periodEnd(doc.periodStart, MAX_MONTHS))} までにしてください）。`);
     if (!doc.doctor) msgs.push('医師氏名が未入力です。');
@@ -247,7 +313,7 @@
     const def = GROUPS[g];
     const sel = doc[`chk_${g}`] || [];
     const other = String(doc[`other_${g}`] || '').trim();
-    const all = settings.showUnchecked;
+    const all = settings.showUnchecked || def.always;
     const out = def.items
       .filter((it) => all || sel.includes(it))
       .map((it) => `<span class="ck${sel.includes(it) ? ' on' : ''}">${sel.includes(it) ? '■' : '□'}${U.esc(it)}</span>`);
@@ -274,22 +340,21 @@
     const age = doc.pt_age !== '' && doc.pt_age != null ? `（${U.esc(doc.pt_age)}歳）` : '（　　歳）';
     const birth = doc.pt_birth ? `${U.formatWareki(doc.pt_birth)}生` : '明・大・昭・平・令　　年　　月　　日生';
     const cm = [doc.cm_name, doc.cm_office && `（${doc.cm_office}）`].filter(Boolean).join(' ');
-    const statement = doc.kubun === '居宅療養管理指導'
-      ? '上記の目標を達成するべく、薬剤師の居宅療養管理指導の実施を指示します。'
-      : '上記の目標を達成するべく、薬剤師の訪問薬剤管理指導の実施を指示します。';
+    const statement = '上記の目標を達成するべく、薬剤師の訪問薬剤管理指導（居宅療養管理指導）の実施を指示します。';
+    const period = hasPeriod(doc) ? `<div class="s-period">指示期間（6月以内に限る）：${dateText(doc.periodStart)} 〜 ${dateText(doc.periodEnd)}</div>` : '';
     return `
       <div class="s-date">${dateText(doc.createdDate)}</div>
       <h1 class="s-title">${U.esc(settings.title)}</h1>
       <div class="s-head">
         <div class="s-to"><span class="s-pharm">${U.esc(doc.pharmacy) || '<span class="blank wide"></span>'}</span> 殿</div>
-        <div class="s-period">指示期間（6月以内に限る）：${dateText(doc.periodStart)} 〜 ${dateText(doc.periodEnd)}</div>
+        ${period}
       </div>
       <table class="s-table">
         <colgroup><col class="c-h"><col><col class="c-h2"><col class="c-v2"></colgroup>
-        <tr><th>区分</th><td colspan="3">${['在宅患者訪問薬剤管理指導', '居宅療養管理指導'].map((v) => `<span class="ck${doc.kubun === v ? ' on' : ''}">${doc.kubun === v ? '■' : '□'}${v}</span>`).join('　　')}</td></tr>
+        <tr><th>区分</th><td colspan="3">${checksHtml(doc, 'kubun')}</td></tr>
         <tr><th>ふりがな<br>患者氏名</th>
           <td><div class="kana">${U.esc(doc.pt_kana)}</div><div class="pname">${U.esc(doc.pt_name)}<span class="sama">様</span></div></td>
-          <th>性別</th><td class="center">${choiceHtml(['男', '女'], doc.pt_sex)}</td></tr>
+          <th>性別</th><td class="center">${U.esc(doc.pt_sex)}</td></tr>
         <tr><th>生年月日</th><td colspan="3">${birth}${age}</td></tr>
         <tr><th>住所</th><td colspan="3">〒${U.esc(doc.pt_zip) || '　　　-　　　　'}<br>${U.esc(doc.pt_address)}</td></tr>
         <tr><th>電話番号</th><td>${U.esc(doc.pt_tel)}</td><th>介護度</th><td>${U.esc(doc.care_level)}</td></tr>
@@ -299,7 +364,7 @@
         <tr><th>治療状況</th><td colspan="3" class="tall">${text(doc.treatment)}</td></tr>
         <tr><th>使用薬剤</th><td colspan="3">${checksHtml(doc, 'drugs_ref')}${text(doc.drugs)}</td></tr>
         <tr><th>在宅移行</th><td colspan="3">
-          <div>退院（予定）日：${dateText(doc.dischargeDate)}　　在宅療養開始（予定）日：${dateText(doc.homeStartDate)}</div>
+          <div>在宅療養開始（予定）日：${dateText(doc.homeStartDate)}</div>
           <div class="sub">${GROUPS.reason.label}</div>${checksHtml(doc, 'reason')}</td></tr>
         <tr><th>在宅移行初期の<br>依頼事項</th><td colspan="3">
           <div class="sub">計画的な訪問薬剤管理指導の開始前に患家を訪問し、以下について対応をお願いします。</div>${checksHtml(doc, 'initial')}</td></tr>
@@ -315,7 +380,7 @@
         <tr><th>医療機関名</th><td>${U.esc(settings.clinic)}</td></tr>
         <tr><th>所在地</th><td>${U.esc(settings.address)}</td></tr>
         <tr><th>電話番号</th><td>${U.esc(settings.tel)}${settings.fax ? `　　FAX ${U.esc(settings.fax)}` : ''}</td></tr>
-        <tr><th>医師氏名</th><td>${doc.department ? `${U.esc(doc.department)}　` : ''}${U.esc(doc.doctor)}<span class="seal">印</span></td></tr>
+        <tr><th>医師氏名</th><td>${U.esc(doc.doctor)}<span class="seal">印</span></td></tr>
       </table>`;
   }
 
@@ -408,7 +473,7 @@
     $('#history-table tbody').innerHTML = rows.map((h) => `<tr data-id="${h.id}"${h.id === currentHistoryId ? ' class="checked"' : ''}>
         <td>${U.esc(U.formatWareki(h.doc.createdDate))}</td>
         <td>${U.esc(h.doc.pt_name)}<br><small class="hint">${U.esc(h.doc.pt_kana)}${h.doc.pt_id ? `　ID:${U.esc(h.doc.pt_id)}` : ''}</small></td>
-        <td>${U.esc(U.formatWareki(h.doc.periodStart))} 〜<br>${U.esc(U.formatWareki(h.doc.periodEnd))}</td>
+        <td>${hasPeriod(h.doc) ? `${U.esc(U.formatWareki(h.doc.periodStart))} 〜<br>${U.esc(U.formatWareki(h.doc.periodEnd))}` : '（記載なし）'}</td>
         <td>${U.esc(h.doc.pharmacy)}</td>
         <td class="ops">
           <button type="button" class="btn small" data-act="open">開く</button>
@@ -436,11 +501,8 @@
       loadDoc(h.doc, h.id);
     } else {
       const today = U.todayIso();
-      loadDoc(Object.assign({}, h.doc, {
-        createdDate: today,
-        periodStart: today,
-        periodEnd: U.periodEnd(today, defaults.months || MAX_MONTHS),
-      }), null);
+      const base = migrate(h.doc);
+      loadDoc(Object.assign(base, { createdDate: today }, hasPeriod(base) ? defaultPeriod({}, today) : { periodStart: '', periodEnd: '' }), null);
       updateAge();
       onFormChange();
     }
@@ -459,9 +521,32 @@
     $('#set-tel').value = settings.tel;
     $('#set-fax').value = settings.fax;
     $('#set-doctors').value = settings.doctors.join('\n');
-    $('#set-departments').value = settings.departments.join('\n');
     $('#set-pharmacies').value = settings.pharmacies.join('\n');
+    renderZipStatus();
     $('#settings-dialog').showModal();
+  }
+
+  async function renderZipStatus() {
+    await window.ZipCode.ready();
+    const m = window.ZipCode.info();
+    $('#zip-status').textContent = m
+      ? `読込済み：${m.fileName}（${m.count.toLocaleString()}件、${new Date(m.importedAt).toLocaleDateString('ja-JP')} 読込）`
+      : '未読込';
+    $('#btn-zip-clear').disabled = !m;
+  }
+
+  async function onZipFile(e) {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    $('#zip-status').textContent = '読み込み中…';
+    try {
+      const m = await window.ZipCode.importFile(file);
+      alert(`郵便番号データを読み込みました（${m.count.toLocaleString()}件）。`);
+    } catch (err) {
+      alert(`郵便番号データを読み込めませんでした。\n${err.message}`);
+    }
+    renderZipStatus();
   }
 
   function saveSettings() {
@@ -472,7 +557,6 @@
       tel: $('#set-tel').value.trim(),
       fax: $('#set-fax').value.trim(),
       doctors: lines($('#set-doctors').value),
-      departments: lines($('#set-departments').value),
       pharmacies: lines($('#set-pharmacies').value),
     });
     write(KEYS.settings, settings);
@@ -484,7 +568,6 @@
   function renderSettingsLists() {
     const opts = (arr) => arr.map((v) => `<option value="${U.esc(v)}"></option>`).join('');
     $('#doctor-list').innerHTML = opts(settings.doctors);
-    $('#department-list').innerHTML = opts(settings.departments);
     $('#pharmacy-list').innerHTML = opts(settings.pharmacies);
     $('#clinic-summary').textContent = settings.clinic
       ? `医療機関: ${settings.clinic}　${settings.address}　TEL ${settings.tel}${settings.fax ? `　FAX ${settings.fax}` : ''}`
@@ -496,13 +579,13 @@
     const fields = {};
     TEMPLATE_FIELDS.forEach((k) => { if (k in doc) fields[k] = doc[k]; });
     let months = defaults.months || MAX_MONTHS;
-    if (doc.periodStart && doc.periodEnd) {
+    if (hasPeriod(doc) && doc.periodStart && doc.periodEnd) {
       const m = [1, 2, 3, 4, 5, 6].find((n) => U.periodEnd(doc.periodStart, n) === doc.periodEnd);
       if (m) months = m;
     }
     defaults = { months, fields };
     write(KEYS.defaults, defaults);
-    alert(`次の項目を既定値として保存しました。「新規作成」でこの内容から始まります。\n\n・区分、宛先（薬局）、医師氏名、診療科\n・チェック項目（使用薬剤／在宅移行／依頼事項／訪問の目的／指示事項／特記事項）\n・指示期間の長さ：${months}か月`);
+    alert(`次の項目を既定値として保存しました。「新規作成」でこの内容から始まります。\n\n・区分、宛先（薬局）、医師氏名\n・チェック項目（使用薬剤／在宅移行／依頼事項／訪問の目的／指示事項／特記事項）\n・指示期間：${isNoPeriod(doc) ? '指定しない' : `${months}か月`}`);
   }
 
   // ---------- 初期化 ----------
@@ -519,6 +602,23 @@
 
     form.addEventListener('submit', (e) => e.preventDefault());
     form.addEventListener('input', onFormChange);
+    form.elements.pt_zip.addEventListener('input', () => { form.elements.pt_zip.dataset.auto = ''; });
+    form.elements.pt_address.addEventListener('change', () => autoZip(false));
+    $('#btn-zip-lookup').addEventListener('click', () => autoZip(true));
+    $('#zip-hint').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-zip]');
+      if (!b) return;
+      setZip(b.dataset.zip);
+      $('#zip-hint').textContent = `郵便番号を入力しました：${b.textContent}`;
+      $('#zip-hint').classList.remove('warn-text');
+    });
+    $('#zip-file').addEventListener('change', onZipFile);
+    $('#btn-zip-clear').addEventListener('click', async () => {
+      if (!confirm('郵便番号データを削除しますか？')) return;
+      await window.ZipCode.clear();
+      renderZipStatus();
+    });
+    window.ZipCode.ready();
     form.addEventListener('change', onFormChange);
     document.querySelectorAll('[data-months]').forEach((b) => b.addEventListener('click', () => setPeriodMonths(Number(b.dataset.months))));
 

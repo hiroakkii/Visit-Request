@@ -56,14 +56,12 @@
               <button type="button" class="btn small" data-months="6">6か月</button>
             </span>
           </div>
+          <label class="inline"><input type="checkbox" name="noPeriod" value="1"> 指示期間を指定しない（指示書に記載しない）</label>
           <div class="hint" id="period-text"></div>
         </div>
         <div class="field">
           <span class="field-label">区分</span>
-          <div class="radios">
-            <label><input type="radio" name="kubun" value="在宅患者訪問薬剤管理指導"> 在宅患者訪問薬剤管理指導（医療保険）</label>
-            <label><input type="radio" name="kubun" value="居宅療養管理指導"> 居宅療養管理指導（介護保険）</label>
-          </div>
+          <div class="checks" data-group="kubun"></div>
         </div>
       </section>
 
@@ -78,20 +76,26 @@
         <div class="grid">
           <label>ふりがな <input type="text" name="pt_kana"></label>
           <label>氏名 <span class="combo"><input type="text" name="pt_name"><span class="suffix">様</span></span></label>
-          <div class="field">
-            <span class="field-label">性別</span>
-            <div class="radios">
-              <label><input type="radio" name="pt_sex" value="男"> 男</label>
-              <label><input type="radio" name="pt_sex" value="女"> 女</label>
-            </div>
-          </div>
+          <label>性別
+            <select name="pt_sex" class="w-sex">
+              <option value=""></option>
+              <option>男</option>
+              <option>女</option>
+            </select>
+          </label>
           <label>患者ID <input type="text" name="pt_id" placeholder="印刷はしません（履歴の検索用）"></label>
           <label>生年月日 <input type="date" name="pt_birth" min="1868-01-25"><span class="wareki" data-wareki="pt_birth"></span></label>
           <label>年齢 <span class="combo"><input type="number" name="pt_age" min="0" max="130" class="w-num"><span class="suffix">歳</span></span>
             <span class="hint" id="age-hint"></span></label>
-          <label>郵便番号 <input type="text" name="pt_zip" placeholder="123-4567" class="w-zip"></label>
+          <label>郵便番号
+            <span class="combo">
+              <input type="text" name="pt_zip" placeholder="123-4567" class="w-zip">
+              <button type="button" class="btn small" id="btn-zip-lookup" title="入力されている住所から郵便番号を探します">住所から入力</button>
+            </span>
+          </label>
           <label>電話番号 <input type="text" name="pt_tel"></label>
           <label class="span2">住所 <input type="text" name="pt_address"></label>
+          <div class="span2 zip-hint" id="zip-hint"></div>
         </div>
       </section>
 
@@ -137,7 +141,6 @@
       <section class="panel">
         <h2>在宅移行初期管理</h2>
         <div class="grid">
-          <label>退院（予定）日 <input type="date" name="dischargeDate"><span class="wareki" data-wareki="dischargeDate"></span></label>
           <label>在宅療養開始（予定）日 <input type="date" name="homeStartDate"><span class="wareki" data-wareki="homeStartDate"></span></label>
         </div>
         <div class="field">
@@ -182,7 +185,6 @@
         <h2>指示医</h2>
         <div class="grid">
           <label>医師氏名 <input type="text" name="doctor" list="doctor-list"><datalist id="doctor-list"></datalist></label>
-          <label>診療科 <input type="text" name="department" list="department-list"><datalist id="department-list"></datalist></label>
         </div>
         <p class="hint" id="clinic-summary"></p>
       </section>
@@ -219,8 +221,21 @@
         <label>電話番号 <input type="text" id="set-tel"></label>
         <label>FAX番号 <input type="text" id="set-fax"></label>
         <label>医師（1行に1名） <textarea id="set-doctors" rows="5" placeholder="山田 太郎&#10;佐藤 花子"></textarea></label>
-        <label>診療科（1行に1つ） <textarea id="set-departments" rows="5" placeholder="内科&#10;外科"></textarea></label>
-        <label class="span2">薬局（1行に1件。宛先の候補になります） <textarea id="set-pharmacies" rows="5" placeholder="○○薬局 本店&#10;△△調剤薬局"></textarea></label>
+        <label>薬局（1行に1件。宛先の候補になります） <textarea id="set-pharmacies" rows="5" placeholder="○○薬局 本店&#10;△△調剤薬局"></textarea></label>
+      </div>
+      <h3>郵便番号データ（住所から郵便番号を自動入力）</h3>
+      <p class="hint">
+        日本郵便の「郵便番号データダウンロード」から <b>住所の郵便番号（1レコード1行、UTF-8形式）utf_ken_all.zip</b>
+        または <b>読み仮名データの促音・拗音を小書きで表記するもの（ken_all.zip）</b> をダウンロードし、zipのまま選択してください。
+        一度読み込めば、このブラウザに保存され、以後はオフラインで使えます（データ更新時は読み込み直してください）。
+      </p>
+      <div class="import-options">
+        <label class="btn">
+          郵便番号データを読み込む
+          <input type="file" id="zip-file" accept=".zip,.csv" hidden>
+        </label>
+        <button type="button" class="btn danger-outline" id="btn-zip-clear">郵便番号データを削除</button>
+        <span class="hint" id="zip-status"></span>
       </div>
       <div class="dialog-actions">
         <button type="button" class="btn" id="btn-settings-cancel">キャンセル</button>
@@ -291,6 +306,7 @@
 
   <script src="lib/xlsx.full.min.js"></script>
   <script src="util.js"></script>
+  <script src="zipcode.js"></script>
   <script src="master.js"></script>
   <script src="app.js"></script>
 </body>
