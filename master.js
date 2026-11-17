@@ -207,15 +207,24 @@
   }
 
   // 見出し行・割当に従って患者データを組み立てる
+  // 患者マスタから除外する患者（業務アプリまとめ版の運用ルール。訪問リスト印刷以外のアプリで使用）
+  // ・ID に「WA」を含む　・名前に「[亘]」を含む（全角の ＷＡ ／ ［亘］、【亘】、(亘) も対象）
+  function isExcludedPatient(id, name) {
+    const n = (s) => String(s == null ? '' : s).normalize('NFKC').toUpperCase();
+    return n(id).includes('WA') || /[\[【(]\s*亘\s*[\]】)]/.test(n(name));
+  }
+
   function buildPatients(p) {
     const { sheet, headerRow, mapping } = p;
     const get = (rowArr, key) => (mapping[key] != null ? rowArr[mapping[key]] : '');
     const out = [];
+    let excluded = 0;
     for (let r = headerRow + 1; r < sheet.fmt.length; r++) {
       const fmt = sheet.fmt[r] || [];
       const raw = sheet.raw[r] || [];
       const mappedValues = Object.values(mapping).map((c) => U.cleanText(fmt[c]));
       if (mappedValues.every((v) => v === '')) continue;
+      if (isExcludedPatient(U.cleanText(get(fmt, 'id')), U.cleanText(get(fmt, 'name')))) { excluded++; continue; }
       const birthText = U.cleanText(get(fmt, 'birth'));
       out.push({
         row: r + sheet.rowOffset + 1,
@@ -238,6 +247,7 @@
       if (!pt.id) pt.key = `row:${pt.row}`;
       else pt.key = seen.get(pt.id) === 1 ? `id:${pt.id}` : `id:${pt.id}#row${pt.row}`;
     });
+    out.excluded = excluded;
     return out;
   }
 
@@ -361,6 +371,7 @@
     const m = pending.mapping;
     const msgs = [];
     const canImport = m.name != null && patients.length > 0;
+    if (patients.excluded) msgs.push({ text: `ID に「WA」、または氏名に「[亘]」が入っている ${patients.excluded} 件は取り込みません（自動で除外）。` });
     if (m.name == null) msgs.push({ error: true, text: '「氏名」の列を指定してください。' });
     else if (patients.length === 0) msgs.push({ error: true, text: '見出し行より下に取込対象のデータがありません。見出しの行を確認してください。' });
 
